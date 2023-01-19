@@ -1,0 +1,41 @@
+# See the OWNERS_ALIASES docs: https://git.k8s.io/community/contributors/guide/owners.md#owners_aliases
+
+aliases:
+  coreos-approvers:
+  - cgwalters
+  - bgilbert
+  - dustymabe
+  - mike-nguyen
+  - jlebon
+  - ashcrow
+  - sohankunkerkar
+  - travier
+  - HuijingHei
+  - jmarrero
+  - aaradhak
+  - ravanelli
+  - gursewak1997
+  - marmijo
+  - prestist
+  - RishabhSaini
+  - jschintag
+  - c4rt0
+  coreos-reviewers:
+  - cgwalters
+  - bgilbert
+  - dustymabe
+  - mike-nguyen
+  - jlebon
+  - ashcrow
+  - sohankunkerkar
+  - travier
+  - HuijingHei
+  - jmarrero
+  - aaradhak
+  - ravanelli
+  - gursewak1997
+  - marmijo
+  - prestist
+  - RishabhSaini
+  - c4rt0
+
