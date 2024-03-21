@@ -143,6 +143,13 @@ pub(crate) struct ManOpts {
     pub(crate) directory: Utf8PathBuf,
 }
 
+#[derive(Debug, Parser, PartialEq, Eq)]
+pub(crate) struct ContainerOpts {
+    /// Run linting checking for files not supported on the container.
+    #[clap(long)]
+    pub(crate) lint: bool,
+}
+
 /// Hidden, internal only options
 #[derive(Debug, clap::Subcommand, PartialEq, Eq)]
 pub(crate) enum InternalsOpts {
@@ -180,6 +187,10 @@ pub(crate) enum TestingOpts {
         root: String,
         #[clap(long)]
         warn: bool,
+    },
+    // Test set of lints on ostree container
+    TestBuildLint {
+        image: String,
     },
 }
 
@@ -292,6 +303,8 @@ pub(crate) enum Opt {
     #[clap(subcommand)]
     #[cfg(feature = "install")]
     Install(InstallOpts),
+    /// Commands to run on the container like lint.
+    Container(ContainerOpts),
     /// Execute the given command in the host mount namespace
     #[cfg(feature = "install")]
     #[clap(hide = true)]
@@ -600,6 +613,14 @@ async fn edit(opts: EditOpts) -> Result<()> {
     Ok(())
 }
 
+async fn container(opts: ContainerOpts) -> Result<()> {
+    if opts.lint {
+        lint()?;
+    }
+
+    Ok(())
+}
+
 /// Implementation of `bootc usroverlay`
 async fn usroverlay() -> Result<()> {
     // This is just a pass-through today.  At some point we may make this a libostree API
@@ -608,6 +629,21 @@ async fn usroverlay() -> Result<()> {
         .args(["admin", "unlock"])
         .exec()
         .into());
+}
+
+/// Implementation of `bootc build commit`
+/// async fn lint() -> Result<()> {
+#[context("linting")]
+fn lint() -> Result<()> {
+    if !ostree_ext::container_utils::is_ostree_container()? {
+        anyhow::bail!(
+            "Not in a ostree container, this command only verifies ostree containers."
+        );
+    }
+
+    let root = cap_std::fs::Dir::open_ambient_dir("/", cap_std::ambient_authority())?;
+    tracing::debug!("Found kernel: {:?}", ostree_ext::bootabletree::find_kernel_dir_fs(&root)?);
+    return Ok(());
 }
 
 /// Parse the provided arguments and execute.
@@ -656,6 +692,7 @@ async fn run_from_opt(opt: Opt) -> Result<()> {
         Opt::Rollback(opts) => rollback(opts).await,
         Opt::Edit(opts) => edit(opts).await,
         Opt::UsrOverlay => usroverlay().await,
+        Opt::Container(opts) => container(opts).await,
         #[cfg(feature = "install")]
         Opt::Install(opts) => match opts {
             InstallOpts::ToDisk(opts) => crate::install::install_to_disk(opts).await,
@@ -729,4 +766,22 @@ fn test_parse_generator() {
         ]),
         Opt::Internals(InternalsOpts::SystemdGenerator { .. })
     ));
+}
+
+#[test]
+fn test_linting() {
+    // linting should only occur in side of a container.
+    match ostree_ext::container_utils::is_ostree_container() {
+        Ok(result) => {
+            if !result {
+                let expected_error_message = "Not in a ostree container, this command only verifies ostree containers.";
+
+                let result = lint();
+                assert_eq!(result.err().unwrap().to_string(), expected_error_message, "Error message mismatch");
+            }
+
+        },
+        Err(_) =>{
+        }
+    }
 }

@@ -9,7 +9,6 @@ use cap_std_ext::cap_std::fs::Dir;
 use fn_error_context::context;
 use rustix::fd::AsFd;
 use xshell::{cmd, Shell};
-
 use crate::blockdev::LoopbackDevice;
 use crate::install::config::InstallConfiguration;
 
@@ -196,6 +195,37 @@ fn verify_selinux_recurse(root: &Dir, path: &mut PathBuf, warn: bool) -> Result<
     Ok(())
 }
 
+#[context("Container tests")]
+fn test_container_lint(image: &str) -> Result<()> {
+
+    let sh = Shell::new()?;
+
+    // Smoke test of container --lint 
+    let _test_1_result = cmd!(sh, "podman run --rm --privileged --pid=host --env=RUST_LOG -v /usr/bin/bootc:/usr/bin/bootc {image} bootc container --lint").run();
+
+    // Setup for multiple kernels lint test
+    cmd!(sh, "podman run -dt --name test --privileged --pid=host --env=RUST_LOG -v /usr/bin/bootc:/usr/bin/bootc {image} bash").run()?;
+    let kernel_name = cmd!(sh, "podman exec test bash -c 'ls /usr/lib/modules | tail -n -1'" ).read()?;
+    Command::new("podman")
+    .arg("exec")
+    .arg("test")
+    .arg("bash")
+    .arg("-c")
+    .arg(format!("sudo cp -r /usr/lib/modules/{} /usr/lib/modules/delete-me", kernel_name))
+    .output()?;
+    let more_then_one_kernel_result = cmd!(sh, "podman exec test bash -c 'bootc container --lint'").read_stderr();
+    // Container Cleanup 
+    cmd!(sh, "podman rm -f test").run()?;
+
+    _test_1_result?;    
+    if let Err(e) = more_then_one_kernel_result {                                                                        
+        assert!(e.to_string().contains("bootc container --lint"));                                                  
+    } else {
+        assert!(false, "Expected error, got none");     
+    }
+    Ok(())
+}
+
 pub(crate) async fn run(opts: TestingOpts) -> Result<()> {
     match opts {
         TestingOpts::RunPrivilegedIntegration {} => {
@@ -220,6 +250,12 @@ pub(crate) async fn run(opts: TestingOpts) -> Result<()> {
             let mut path = PathBuf::from(".");
             tokio::task::spawn_blocking(move || verify_selinux_recurse(&rootfs, &mut path, warn))
                 .await?
+        }
+        TestingOpts::TestBuildLint { image } => {
+            tokio::task::spawn_blocking(move || test_build_lint(&image)).await?
+        }
+        TestingOpts::TestContainerLint { image } => {
+            tokio::task::spawn_blocking(move || test_container_lint(&image)).await?
         }
     }
 }
