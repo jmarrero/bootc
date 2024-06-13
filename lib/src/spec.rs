@@ -90,6 +90,18 @@ pub struct ImageStatus {
     pub image_digest: String,
 }
 
+/// The status of the booted image
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PrettyImageStatus {
+    /// The currently booted image
+    pub image: ImageReference,
+    /// The version string, if any
+    pub version: Option<String>,
+    /// The digest of the fetched image (e.g. sha256:a0...);
+    pub image_digest: String,
+}
+
 /// A bootable entry
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -114,6 +126,25 @@ pub struct BootEntry {
     pub pinned: bool,
     /// If this boot entry is ostree based, the corresponding state
     pub ostree: Option<BootEntryOstree>,
+}
+
+/// A bootable entry
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct BootEntrys {
+    /// 
+    pub boot_entry: Option<BootEntry>,
+    
+    ///
+    pub pretty_boot_entry: Option<PrettyBootEntry>
+}
+
+/// A bootable entry
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PrettyBootEntry {
+    /// The image reference
+    pub image: Option<ImageStatus>
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]

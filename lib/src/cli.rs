@@ -116,6 +116,11 @@ pub(crate) struct StatusOpts {
     /// Only display status for the booted deployment.
     #[clap(long)]
     pub(crate) booted: bool,
+    
+    /// Condense status into most important info, to reduce eye fatigue 
+    #[clap(long)]
+    pub(crate) pretty: bool,
+    
 }
 
 /// Options for internal testing
@@ -731,7 +736,8 @@ fn test_parse_opts() {
         Opt::parse_including_static(["bootc", "status"]),
         Opt::Status(StatusOpts {
             json: false,
-            booted: false
+            booted: false,
+            pretty: false
         })
     ));
 }
