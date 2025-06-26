@@ -99,7 +99,7 @@ This requires two votes from active maintainers.
 ## Meetings
 
 Time zones permitting, Maintainers are expected to participate in the public
-developer meeting, which occurs at 3:30 PM ET on Thursdays via [Zoom](TODO).
+developer meeting, which occurs at 11:30 AM ET on Fridays via [jit.si](https://meet.jit.si/YourOperatingSystemIsAContainer).
 
 Maintainers will also have closed meetings in order to discuss security reports
 or Code of Conduct violations.  Such meetings should be scheduled by any
