@@ -1532,12 +1532,7 @@ pub(crate) async fn install_to_disk(mut opts: InstallToDiskOpts) -> Result<()> {
     } else if !target_blockdev_meta.file_type().is_block_device() {
         anyhow::bail!("Not a block device: {}", block_opts.device);
     }
-    let state = prepare_install(
-        opts.config_opts,
-        opts.source_opts,
-        opts.target_opts,
-    )
-    .await?;
+    let state = prepare_install(opts.config_opts, opts.source_opts, opts.target_opts).await?;
 
     // This is all blocking stuff
     let (mut rootfs, loopback) = {
@@ -1746,12 +1741,7 @@ pub(crate) async fn install_to_filesystem(
     // IMPORTANT: and hence anything that is done before MUST BE IDEMPOTENT.
     // IMPORTANT: In practice, we should only be gathering information before this point,
     // IMPORTANT: and not performing any mutations at all.
-    let state = prepare_install(
-        opts.config_opts,
-        opts.source_opts,
-        opts.target_opts,
-    )
-    .await?;
+    let state = prepare_install(opts.config_opts, opts.source_opts, opts.target_opts).await?;
     // And the last bit of state here is the fsopts, which we also destructure now.
     let mut fsopts = opts.filesystem_opts;
 
