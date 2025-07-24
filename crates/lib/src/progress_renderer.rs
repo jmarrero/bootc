@@ -34,7 +34,6 @@ pub struct ProgressRenderer {
     filter: ProgressFilter,
 
     // Style templates
-    bytes_style: ProgressStyle,
     steps_style: ProgressStyle,
     subtask_style: ProgressStyle,
 }
@@ -43,20 +42,14 @@ impl ProgressRenderer {
     pub fn new(filter: ProgressFilter) -> Self {
         let multi = MultiProgress::new();
 
-        let bytes_style = ProgressStyle::with_template(
-            "{spinner:.green} {msg} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})"
-        ).unwrap()
-        .with_key("eta", |state: &indicatif::ProgressState, w: &mut dyn std::fmt::Write| {
-            write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap_or(());
-        });
-
         let steps_style = ProgressStyle::with_template(
-            "{spinner:.green} {msg} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len}",
+            "{prefix} {bar} {pos}/{len} {wide_msg}",
         )
         .unwrap();
 
+        // Match the old indicatif styling for byte progress with indentation
         let subtask_style = ProgressStyle::with_template(
-            "  {spinner:.yellow} {msg} [{wide_bar:.green/blue}] {bytes}/{total_bytes}",
+            " └ {prefix} {bar} {binary_bytes}/{binary_total_bytes} ({binary_bytes_per_sec}) {wide_msg}",
         )
         .unwrap();
 
@@ -67,7 +60,6 @@ impl ProgressRenderer {
             active_tasks: HashSet::new(),
             current_task_type: None,
             filter,
-            bytes_style,
             steps_style,
             subtask_style,
         }
@@ -147,10 +139,10 @@ impl ProgressRenderer {
     fn update_bytes_progress(
         &mut self,
         task: &str,
-        description: &str,
+        _description: &str,
         id: &str,
-        bytes: u64,
-        bytes_total: u64,
+        _bytes: u64,
+        _bytes_total: u64,
         steps: u64,
         steps_total: u64,
         subtasks: &[SubTaskBytes<'_>],
@@ -160,9 +152,15 @@ impl ProgressRenderer {
         // Check if we need to create a new bar
         let needs_new_bar = !self.bars.contains_key(&bar_id);
         if needs_new_bar {
-            let pb = self.multi.add(ProgressBar::new(bytes_total.max(1)));
-            pb.set_style(self.bytes_style.clone());
-            pb.set_message(format!("{} ({})", description, task));
+            let pb = self.multi.add(ProgressBar::new(steps_total.max(1)));
+            pb.set_style(self.steps_style.clone());
+            // Match old format: set prefix to "Fetching layers" for pulling tasks
+            if task == "pulling" {
+                pb.set_prefix("Fetching layers");
+            } else {
+                pb.set_prefix(task.to_string());
+            }
+            pb.set_message("");
             self.active_tasks.insert(bar_id.clone());
             self.bars.insert(bar_id.clone(), pb);
         }
@@ -170,27 +168,19 @@ impl ProgressRenderer {
         // Get the bar and update it
         let bar = self.bars.get(&bar_id).unwrap();
 
-        // Update main progress
-        if bytes_total > 0 {
-            bar.set_length(bytes_total);
-        }
-        bar.set_position(bytes);
-
-        // Show steps if available
+        // Update main progress - use steps for the main bar
         if steps_total > 0 {
-            bar.set_message(format!(
-                "{} ({}) - Step {}/{}",
-                description, task, steps, steps_total
-            ));
+            bar.set_length(steps_total);
         }
+        bar.set_position(steps);
 
         // Update or create subtask bars
         self.update_subtask_bars(subtasks, &bar_id)?;
 
-        // Mark as complete if done
-        if bytes_total > 0 && bytes >= bytes_total {
+        // Mark as complete if done - match old behavior by finishing and clearing
+        if steps >= steps_total {
             if let Some(bar) = self.bars.get(&bar_id) {
-                bar.finish_with_message(format!("✓ {} completed", description));
+                bar.finish_and_clear();
             }
         }
 
@@ -245,10 +235,10 @@ impl ProgressRenderer {
             }
         }
 
-        // Mark as complete if done
+        // Mark as complete if done - match old behavior by finishing and clearing
         if steps >= steps_total {
             if let Some(bar) = self.bars.get(&bar_id) {
-                bar.finish_with_message(format!("✓ {} completed", description));
+                bar.finish_and_clear();
             }
         }
 
@@ -276,7 +266,9 @@ impl ProgressRenderer {
                         self.multi.add(ProgressBar::new(subtask.bytes_total.max(1)))
                     };
                     pb.set_style(self.subtask_style.clone());
-                    pb.set_message(format!("{}: {}", subtask.description, subtask.id));
+                    // Match old format: set prefix to "Fetching" for byte progress
+                    pb.set_prefix("Fetching");
+                    pb.set_message(format!("{} {}", subtask.description, subtask.id));
                     pb
                 });
 
@@ -286,10 +278,9 @@ impl ProgressRenderer {
             }
             subtask_bar.set_position(subtask.bytes);
 
-            // Mark as complete if done
+            // Mark as complete if done - but don't show checkmarks, just clear like the old version
             if subtask.bytes_total > 0 && subtask.bytes >= subtask.bytes_total {
-                subtask_bar
-                    .finish_with_message(format!("  ✓ {}: {}", subtask.description, subtask.id));
+                subtask_bar.finish_and_clear();
             }
         }
 
@@ -313,6 +304,10 @@ impl ProgressRenderer {
     /// Finish and clean up all progress bars
     pub fn finish(&mut self) {
         self.clear_all_bars();
+        // Clear the multi-progress like the old version did
+        if let Err(e) = self.multi.clear() {
+            tracing::warn!("clearing progress bars: {e}");
+        }
     }
 }
 
@@ -324,7 +319,7 @@ mod tests {
 
     #[test]
     fn test_filter_matching() {
-        let mut renderer =
+        let renderer =
             ProgressRenderer::new(ProgressFilter::TasksMatching(vec!["pulling".to_string()]));
 
         // Should render pulling tasks
@@ -337,14 +332,14 @@ mod tests {
     }
 
     #[test]
-    fn test_last_task_only() {
-        let mut renderer = ProgressRenderer::new(ProgressFilter::LastTaskOnly);
+    fn test_all_tasks() {
+        let mut renderer = ProgressRenderer::new(ProgressFilter::All);
 
         // All tasks should be renderable
         assert!(renderer.should_render_task("pulling"));
         assert!(renderer.should_render_task("installing"));
 
-        // But ensure_clean_context should clear when task changes
+        // But ensure_clean_context should track current task
         renderer.ensure_clean_context("pulling");
         assert_eq!(renderer.current_task_type, Some("pulling".to_string()));
 

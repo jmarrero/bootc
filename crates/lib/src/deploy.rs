@@ -162,10 +162,13 @@ async fn handle_layer_progress_print(
         Some(ProgressFilter::TasksMatching(vec!["pulling".to_string()]))
     };
 
-    let mut aggregator = ProgressAggregatorBuilder::new()
-        .with_json(prog.clone())
-        .with_visual(visual_filter.unwrap_or(ProgressFilter::TasksMatching(vec![])))
-        .build();
+    let mut aggregator = {
+        let mut builder = ProgressAggregatorBuilder::new().with_json(prog.clone());
+        if let Some(filter) = visual_filter {
+            builder = builder.with_visual(filter);
+        }
+        builder.build()
+    };
 
     let mut subtasks = vec![];
     let mut subtask: SubTaskBytes = Default::default();

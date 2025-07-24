@@ -126,7 +126,7 @@ mod tests {
     async fn test_task_filtering() -> Result<()> {
         // Create an aggregator that only shows "pulling" tasks
         let mut aggregator = ProgressAggregatorBuilder::new()
-            .for_tasks(vec!["pulling".to_string()])
+            .with_visual(ProgressFilter::TasksMatching(vec!["pulling".to_string()]))
             .build();
 
         // Send a pulling event (should be shown)
