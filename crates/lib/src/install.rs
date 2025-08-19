@@ -779,6 +779,25 @@ async fn install_container(
     )?;
     let kargsd = kargsd.iter().map(|s| s.as_str());
 
+    // If the target uses aboot, then we need to set that bootloader in the ostree
+    // config before deploying the commit
+    if ostree_ext::bootabletree::commit_has_aboot_img(&merged_ostree_root, None)? {
+        tracing::debug!("Setting bootloader to aboot");
+        Command::new("ostree")
+            .args([
+                "config",
+                "--repo",
+                "ostree/repo",
+                "set",
+                "sysroot.bootloader",
+                "aboot",
+            ])
+            .cwd_dir(root_setup.physical_root.try_clone()?)
+            .run_capture_stderr()
+            .context("Setting bootloader config to aboot")?;
+        sysroot.repo().reload_config(None::<&gio::Cancellable>)?;
+    }
+
     // Keep this in sync with install/completion.rs for the Anaconda fixups
     let install_config_kargs = state
         .install_config

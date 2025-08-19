@@ -12,6 +12,7 @@ use ostree::prelude::*;
 
 const MODULES: &str = "usr/lib/modules";
 const VMLINUZ: &str = "vmlinuz";
+const ABOOT_IMG: &str = "aboot.img";
 
 /// Find the kernel modules directory in a bootable OSTree commit.
 /// The target directory will have a `vmlinuz` file representing the kernel binary.
@@ -86,6 +87,20 @@ pub fn find_kernel_dir_fs(root: &Dir) -> Result<Option<Utf8PathBuf>> {
         }
     }
     Ok(r)
+}
+
+/// Check if there is an aboot image in the kernel tree dir
+pub fn commit_has_aboot_img(
+    root: &gio::File,
+    cancellable: Option<&gio::Cancellable>,
+) -> Result<bool> {
+    if let Some(kernel_dir) = find_kernel_dir(root, cancellable)? {
+        Ok(kernel_dir
+            .resolve_relative_path(ABOOT_IMG)
+            .query_exists(cancellable))
+    } else {
+        Ok(false)
+    }
 }
 
 #[cfg(test)]
