@@ -19,6 +19,7 @@ use std::io::Write;
 use std::os::fd::{AsFd, AsRawFd};
 use std::os::unix::process::CommandExt;
 use std::path::Path;
+use std::process;
 use std::process::Command;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -624,7 +625,11 @@ async fn initialize_ostree_root(state: &State, root_setup: &RootSetup) -> Result
     }
 
     let sysroot = {
-        let path = format!("/proc/self/fd/{}", rootfs_dir.as_fd().as_raw_fd());
+        let path = format!(
+            "/proc/{}/fd/{}",
+            process::id(),
+            rootfs_dir.as_fd().as_raw_fd()
+        );
         ostree::Sysroot::new(Some(&gio::File::for_path(path)))
     };
     sysroot.load(cancellable)?;
