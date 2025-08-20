@@ -4,6 +4,8 @@ use std::ops::Deref;
 
 use anyhow::Result;
 
+use crate::utils::async_task_with_spinner;
+
 /// A locked system root.
 #[derive(Debug)]
 pub struct SysrootLock {
@@ -35,20 +37,17 @@ impl SysrootLock {
     /// immediately, a status message will be printed to standard output.
     /// The lock will be unlocked when this object is dropped.
     pub async fn new_from_sysroot(sysroot: &ostree::Sysroot) -> Result<Self> {
-        let mut printed = false;
-        loop {
-            if sysroot.try_lock()? {
-                return Ok(Self {
-                    sysroot: sysroot.clone(),
-                    unowned: false,
-                });
-            }
-            if !printed {
-                eprintln!("Waiting for sysroot lock...");
-                printed = true;
-            }
-            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        if sysroot.try_lock()? {
+            return Ok(Self {
+                sysroot: sysroot.clone(),
+                unowned: false,
+            });
         }
+        async_task_with_spinner("Waiting for sysroot lock...", sysroot.lock_future()).await?;
+        Ok(Self {
+            sysroot: sysroot.clone(),
+            unowned: false,
+        })
     }
 
     /// This function should only be used when you have locked the sysroot
