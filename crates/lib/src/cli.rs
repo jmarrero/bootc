@@ -85,7 +85,9 @@ pub(crate) struct UpgradeOpts {
     ///
     /// 'required' will fail if soft reboot is not available.
     /// 'auto' will use soft reboot if available, otherwise fall back to regular reboot.
-    #[clap(long = "soft-reboot", conflicts_with = "check")]
+    // Hidden because the ostree side needs further stabilization.
+    // See: https://github.com/ostreedev/ostree/issues/3503
+    #[clap(long = "soft-reboot", conflicts_with = "check", hide = true)]
     pub(crate) soft_reboot: Option<SoftRebootMode>,
 
     #[clap(flatten)]
@@ -111,7 +113,9 @@ pub(crate) struct SwitchOpts {
     ///
     /// 'required' will fail if soft reboot is not available.
     /// 'auto' will use soft reboot if available, otherwise fall back to regular reboot.
-    #[clap(long = "soft-reboot")]
+    // Hidden because the ostree side needs further stabilization.
+    // See: https://github.com/ostreedev/ostree/issues/3503
+    #[clap(long = "soft-reboot", hide = true)]
     pub(crate) soft_reboot: Option<SoftRebootMode>,
 
     /// The transport; e.g. oci, oci-archive, containers-storage.  Defaults to `registry`.
@@ -162,7 +166,9 @@ pub(crate) struct RollbackOpts {
     ///
     /// 'required' will fail if soft reboot is not available.
     /// 'auto' will use soft reboot if available, otherwise fall back to regular reboot.
-    #[clap(long = "soft-reboot")]
+    // Hidden because the ostree side needs further stabilization.
+    // See: https://github.com/ostreedev/ostree/issues/3503
+    #[clap(long = "soft-reboot", hide = true)]
     pub(crate) soft_reboot: Option<SoftRebootMode>,
 }
 
