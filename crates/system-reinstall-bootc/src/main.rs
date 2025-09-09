@@ -28,8 +28,10 @@ pub(crate) struct ReinstallOpts {
     /// The bootc image to install
     pub(crate) image: String,
     // Note if we ever add any other options here,
-    #[arg(long)]
+    #[arg(long, hide = true)]
     pub(crate) composefs_backend: bool,
+    #[arg(long = "experimental-unified-storage", hide = true)]
+    pub(crate) unified_storage_exp: bool,
 }
 
 #[context("run")]
@@ -40,6 +42,7 @@ fn run() -> Result<()> {
         ReinstallOpts {
             image: config.bootc_image,
             composefs_backend: config.composefs_backend,
+            unified_storage_exp: false,
         }
     } else {
         // Otherwise an image is required.
@@ -79,7 +82,9 @@ fn run() -> Result<()> {
     println!("{}", reinstall_podman_command.to_string_pretty());
 
     println!();
-    println!("After reboot, the current root will be available in the /sysroot directory. Existing mounts will not be automatically mounted by the bootc system unless they are defined in the bootc image. Some automatic cleanup of the previous root will be performed.");
+    println!(
+        "After reboot, the current root will be available in the /sysroot directory. Existing mounts will not be automatically mounted by the bootc system unless they are defined in the bootc image. Some automatic cleanup of the previous root will be performed."
+    );
 
     prompt::temporary_developer_protection_prompt()?;
 
