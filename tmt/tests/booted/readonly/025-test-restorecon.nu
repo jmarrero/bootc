@@ -13,7 +13,7 @@ for dir in $directories {
     if $dir == "/boot" {
         # /boot is expected to have incorrect labels - known issue
         # See: https://github.com/bootc-dev/bootc/issues/1622
-        print $"Note: /boot restorecon output (expected): ($out)"
+        print $"Note: /boot restorecon output \(expected\): ($out)"
     } else {
         # Assert it's empty for other directories
         assert equal $out "" $"restorecon run found incorrect labels in ($dir): ($out)"
