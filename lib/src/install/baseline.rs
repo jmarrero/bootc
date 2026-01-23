@@ -271,7 +271,7 @@ pub(crate) fn install_create_rootfs(
     }
 
     let esp_partno = if super::ARCH_USES_EFI {
-        let esp_guid = crate::bootloader::ESP_GUID;
+        let esp_guid = bootc_blockdev::ESP;
         partno += 1;
         writeln!(
             &mut partitioning_buf,
@@ -439,6 +439,7 @@ pub(crate) fn install_create_rootfs(
         device_info,
         physical_root_path,
         physical_root,
+        target_root_path: None,
         rootfs_uuid: Some(root_uuid.to_string()),
         boot,
         kargs,

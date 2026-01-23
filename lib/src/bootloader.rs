@@ -1,5 +1,7 @@
 use anyhow::{anyhow, bail, Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
+use cap_std_ext::cap_std::fs::Dir;
+use cap_std_ext::dirext::CapStdExtDirExt;
 use fn_error_context::context;
 
 use crate::task::Task;
@@ -8,14 +10,83 @@ use bootc_blockdev::PartitionTable;
 /// The name of the mountpoint for efi (as a subdirectory of /boot, or at the toplevel)
 pub(crate) const EFI_DIR: &str = "efi";
 #[cfg(feature = "install-to-disk")]
-pub(crate) const ESP_GUID: &str = "C12A7328-F81F-11D2-BA4B-00A0C93EC93B";
-#[cfg(feature = "install-to-disk")]
 pub(crate) const PREPBOOT_GUID: &str = "9E1A2D38-C612-4316-AA26-8B49521E5A8B";
 #[cfg(feature = "install-to-disk")]
 pub(crate) const PREPBOOT_LABEL: &str = "PowerPC-PReP-boot";
 #[cfg(target_arch = "powerpc64")]
 /// We make a best-effort to support MBR partitioning too.
 pub(crate) const PREPBOOT_MBR_TYPE: &str = "41";
+
+/// Get the backing device for a filesystem at the given path.
+/// Traverses parent devices using lsblk to find the root disk,
+/// correctly handling LVM, device-mapper, RAID, and multi-digit partitions.
+fn get_backing_device(root_path: &Utf8Path) -> Result<String> {
+    let fsinfo = crate::mount::inspect_filesystem(root_path)?;
+    let mut dev = fsinfo.source;
+    loop {
+        let mut parents = bootc_blockdev::find_parent_devices(&dev)?.into_iter();
+        let Some(parent) = parents.next() else {
+            break;
+        };
+        dev = parent;
+    }
+    Ok(dev)
+}
+
+/// Get ESP partition node based on the root path.
+/// Uses robust lsblk-based device detection that works with LVM, RAID, etc.
+fn get_esp_partition_node(root_path: &Utf8Path) -> Result<Option<String>> {
+    let device = get_backing_device(root_path)?;
+    tracing::debug!("Looking for ESP on backing device: {device}");
+    let base_partitions = bootc_blockdev::partitions_of(Utf8Path::new(&device))?;
+    let esp = base_partitions.find_partition_of_esp()?;
+    if let Some(ref esp) = esp {
+        tracing::debug!("Found ESP partition: {}", esp.node);
+    } else {
+        tracing::debug!("No ESP partition found on {device}");
+    }
+    Ok(esp.map(|v| v.node.clone()))
+}
+
+/// Mount ESP partition at /boot/efi if it's not already mounted.
+/// On FCOS, the ESP is not mounted after boot, so we need to mount it
+/// before cleaning boot directories.
+#[context("Mounting ESP partition")]
+pub(crate) fn mount_esp_part(root: &Dir, root_path: &Utf8Path, is_ostree: bool) -> Result<()> {
+    let efi_path = Utf8Path::new("boot").join(EFI_DIR);
+    let Some(esp_fd) = root
+        .open_dir_optional(&efi_path)
+        .context("Opening /boot/efi")?
+    else {
+        // No /boot/efi directory, nothing to do
+        return Ok(());
+    };
+
+    // Check if already mounted
+    let Some(false) = esp_fd.is_mountpoint(".")? else {
+        // Already mounted or can't determine, nothing to do
+        return Ok(());
+    };
+
+    tracing::debug!("Not a mountpoint: /boot/efi");
+
+    // On ostree env, use the sysroot path for device detection
+    let detect_path = if is_ostree {
+        root_path.join("sysroot")
+    } else {
+        root_path.to_owned()
+    };
+
+    if let Some(esp_part) = get_esp_partition_node(&detect_path)? {
+        crate::task::Task::new_and_run(
+            "Mounting ESP",
+            "mount",
+            [esp_part.as_str(), root_path.join(&efi_path).as_str()],
+        )?;
+        tracing::debug!("Mounted {esp_part} at /boot/efi");
+    }
+    Ok(())
+}
 
 /// Find the device to pass to bootupd. Only on powerpc64 right now
 /// we explicitly find one with a specific label.
