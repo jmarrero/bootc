@@ -12,6 +12,11 @@ use serde::Deserialize;
 
 use bootc_utils::CommandRunExt;
 
+/// ESP partition type UUID for GPT (EFI System Partition)
+pub const ESP: &str = "c12a7328-f81f-11d2-ba4b-00a0c93ec93b";
+/// ESP partition type IDs for MBR (0x06 = FAT16, 0xEF = EFI System)
+pub const ESP_ID_MBR: &[u8] = &[0x06, 0xEF];
+
 #[derive(Debug, Deserialize)]
 struct DevicesOutput {
     blockdevices: Vec<Device>,
@@ -117,6 +122,7 @@ pub struct Partition {
     pub parttype: String,
     pub uuid: Option<String>,
     pub name: Option<String>,
+    pub bootable: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
@@ -161,12 +167,50 @@ impl PartitionTable {
             .ok_or_else(|| anyhow::anyhow!("Missing partition for index {partno}"))?;
         Ok(r)
     }
+
+    /// Find the partition with the given type UUID (case-insensitive).
+    ///
+    /// Partition type UUIDs are compared case-insensitively per the GPT specification,
+    /// as different tools may report them in different cases.
+    pub fn find_partition_of_type(&self, uuid: &str) -> Option<&Partition> {
+        self.partitions.iter().find(|p| p.parttype_matches(uuid))
+    }
+
+    /// Find the partition with bootable is 'true'.
+    #[allow(dead_code)]
+    pub fn find_partition_of_bootable(&self) -> Option<&Partition> {
+        self.partitions.iter().find(|p| p.is_bootable())
+    }
+
+    /// Find the ESP (EFI System Partition).
+    pub fn find_partition_of_esp(&self) -> Result<Option<&Partition>> {
+        match &self.label {
+            PartitionType::Dos => Ok(self.partitions.iter().find(|b| {
+                u8::from_str_radix(&b.parttype, 16)
+                    .map(|pt| ESP_ID_MBR.contains(&pt))
+                    .unwrap_or(false)
+            })),
+            PartitionType::Gpt => Ok(self.find_partition_of_type(ESP)),
+            _ => Err(anyhow::anyhow!("Unsupported partition table type")),
+        }
+    }
 }
 
 impl Partition {
     #[allow(dead_code)]
     pub fn path(&self) -> &Utf8Path {
         self.node.as_str().into()
+    }
+
+    /// Compare partition type UUID case-insensitively per the GPT specification,
+    /// as different tools may report them in different cases.
+    pub fn parttype_matches(&self, uuid: &str) -> bool {
+        self.parttype.eq_ignore_ascii_case(uuid)
+    }
+
+    /// Check this partition's bootable property.
+    pub fn is_bootable(&self) -> bool {
+        self.bootable.unwrap_or(false)
     }
 }
 
@@ -503,6 +547,51 @@ mod test {
             table.partitiontable.find("/dev/loop0p2").unwrap().size,
             20961247
         );
+        Ok(())
+    }
+
+    #[test]
+    fn test_find_partition_of_esp() -> Result<()> {
+        let fixture = indoc::indoc! { r#"
+        {
+            "partitiontable": {
+               "label": "gpt",
+               "id": "A67AA901-2C72-4818-B098-7F1CAC127279",
+               "device": "/dev/loop0",
+               "unit": "sectors",
+               "firstlba": 34,
+               "lastlba": 20971486,
+               "sectorsize": 512,
+               "partitions": [
+                  {
+                     "node": "/dev/loop0p1",
+                     "start": 2048,
+                     "size": 8192,
+                     "type": "C12A7328-F81F-11D2-BA4B-00A0C93EC93B",
+                     "uuid": "58A4C5F0-BD12-424C-B563-195AC65A25DD",
+                     "name": "EFI System"
+                  },{
+                     "node": "/dev/loop0p2",
+                     "start": 10240,
+                     "size": 20961247,
+                     "type": "0FC63DAF-8483-4772-8E79-3D69D8477DE4",
+                     "uuid": "F51ABB0D-DA16-4A21-83CB-37F4C805AAA0",
+                     "name": "root"
+                  }
+               ]
+            }
+         }
+        "# };
+        let table: SfDiskOutput = serde_json::from_str(fixture).unwrap();
+
+        // Find ESP partition using case-insensitive UUID matching
+        let esp = table.partitiontable.find_partition_of_esp()?.unwrap();
+        assert_eq!(esp.node, "/dev/loop0p1");
+
+        // Test parttype_matches is case-insensitive
+        assert!(esp.parttype_matches("c12a7328-f81f-11d2-ba4b-00a0c93ec93b"));
+        assert!(esp.parttype_matches("C12A7328-F81F-11D2-BA4B-00A0C93EC93B"));
+
         Ok(())
     }
 }
