@@ -126,6 +126,19 @@ bootupd_nevra=$(dnf --disableplugin=subscription-manager --disablerepo=* --enabl
 dnf -y install ${bootupd_nevra}
 rm -f /etc/yum.repos.d/coreos-continuous.repo
 
+# Upgrade ostree to 2026.1 for bootconfig-extra support (required by loader-entries source tracking)
+# xref https://github.com/ostreedev/ostree/pull/3570
+# TODO: Remove this once c10s base images ship ostree >= 2026.1
+arch=$(uname -m)
+ostree_koji_base="https://kojihub.stream.centos.org/kojifiles/vol/koji02/packages/ostree/2026.1/1.el10/${arch}"
+dnf -y install \
+    "${ostree_koji_base}/ostree-2026.1-1.el10.${arch}.rpm" \
+    "${ostree_koji_base}/ostree-libs-2026.1-1.el10.${arch}.rpm"
+# ostree-grub2 is only on grub2-capable arches; upgrade if already installed
+if rpm -q ostree-grub2 &>/dev/null; then
+    dnf -y install "${ostree_koji_base}/ostree-grub2-2026.1-1.el10.${arch}.rpm"
+fi
+
 dnf clean all
 # Stock extra cleaning of logs and caches in general (mostly dnf)
 rm /var/log/* /var/cache /var/lib/{dnf,rpm-state,rhsm} -rf
