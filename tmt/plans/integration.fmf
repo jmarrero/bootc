@@ -253,4 +253,11 @@ execute:
     how: fmf
     test:
       - /tmt/tests/tests/test-42-loader-entries-source
+
+/plan-43-tuned-e2e:
+  summary: E2E test for TuneD + bootc + transient /etc
+  discover:
+    how: fmf
+    test:
+      - /tmt/tests/tests/test-43-tuned-e2e
 # END GENERATED PLANS

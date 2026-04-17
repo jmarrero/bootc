@@ -158,3 +158,8 @@ check:
   summary: Test bootc loader-entries set-options-for-source
   duration: 30m
   test: nu booted/test-loader-entries-source.nu
+
+/test-43-tuned-e2e:
+  summary: E2E test for TuneD + bootc + transient /etc
+  duration: 30m
+  test: nu booted/test-tuned-e2e.nu

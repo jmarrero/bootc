@@ -1,0 +1,37 @@
+# E2E test image: TuneD + bootc + ostree 2026.1 + transient /etc
+# Tests the full stack: TuneD -> bootc loader-entries set-options-for-source -> ostree
+# Base: localhost/bootc (already has our bootc + ostree 2026.1)
+#
+# Build with:
+#   podman build -t localhost/bootc-tuned-e2e \
+#     --build-arg TUNED_REPO=https://github.com/jmarrero/tuned.git \
+#     --build-arg TUNED_BRANCH=kargs-source \
+#     -f Containerfile.tuned-e2e .
+#
+# Or with a local TuneD source:
+#   podman build -t localhost/bootc-tuned-e2e \
+#     -f Containerfile.tuned-e2e /path/to/tuned
+FROM localhost/bootc
+
+ARG TUNED_REPO=https://github.com/jmarrero/tuned.git
+ARG TUNED_BRANCH=kargs-source
+
+# Install TuneD runtime dependencies and build tools
+RUN dnf install -y make git desktop-file-utils \
+        python3-pyudev python3-linux-procfs python3-gobject-base \
+        python3-configobj python3-dbus python3-inotify && \
+    dnf clean all
+
+# Install TuneD from git (used when no local source is provided)
+# If a build context with TuneD source is provided, COPY . will overlay this
+RUN git clone ${TUNED_REPO} --branch ${TUNED_BRANCH} /tmp/tuned-src && \
+    cd /tmp/tuned-src && \
+    PYVER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')") && \
+    make install DESTDIR=/ PYTHON_SITELIB=/usr/lib/python${PYVER}/site-packages && \
+    rm -rf /tmp/tuned-src
+
+# Enable transient /etc
+# This is the key scenario: /etc/tuned/bootcmdline is lost on every reboot
+RUN printf '[etc]\ntransient=true\n' >> /usr/lib/ostree/prepare-root.conf && \
+    set -x; kver=$(cd /usr/lib/modules && echo *); \
+    dracut -vf /usr/lib/modules/$kver/initramfs.img $kver
