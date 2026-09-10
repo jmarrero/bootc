@@ -10,6 +10,7 @@
 
 - [Building images](building/guidance.md)
 - [Container runtime vs bootc runtime](building/bootc-runtime.md)
+- [DNS and resolv.conf](building/dns.md)
 - [Users, groups, SSH keys](building/users-and-groups.md)
 - [Kernel arguments](building/kernel-arguments.md)
 - [Secrets](building/secrets.md)
