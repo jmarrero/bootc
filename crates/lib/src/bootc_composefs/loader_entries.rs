@@ -16,10 +16,10 @@
 //! See <https://github.com/bootc-dev/bootc/issues/899>
 
 use anyhow::{Context, Result};
-use linux_kernel_cmdline::utf8::CmdlineOwned;
 use cap_std_ext::cap_std::fs::Dir;
 use cap_std_ext::dirext::CapStdExtDirExt;
 use fn_error_context::context;
+use linux_kernel_cmdline::utf8::CmdlineOwned;
 use std::collections::BTreeMap;
 
 use super::state::get_booted_bls;

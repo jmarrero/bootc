@@ -3,7 +3,7 @@
 #   skip_if_ostree: true
 # tmt:
 #   summary: Test bootc loader-entries set-options-for-source on composefs
-#   duration: 30m
+#   duration: 45m
 #
 # This test verifies source-tracked kernel argument management on composefs-
 # booted systems. The composefs path directly modifies BLS entry files on
@@ -16,6 +16,9 @@
 # 6. Source removal (--source without --options clears all owned kargs)
 # 7. Idempotent operation (no changes when kargs already match)
 # 8. Existing system kargs preserved through changes
+# 9. `bootc switch` to a new image keeps both the source kargs and the
+#    x-options-source-* keys in the new entry
+# 10. Source removal after the switch still finds and removes its kargs
 #
 # This test is composefs-specific. It exits 0 (skip) on ostree-booted systems.
 # The UKI boot type is also skipped since kargs are embedded in the PE binary.
@@ -44,13 +47,28 @@ def parse_cmdline [] {
 
 # Read x-options-source-* keys from the booted BLS entry.
 # On composefs, entries are named bootc_*.conf (not ostree-*.conf).
+# Read x-options-source-* keys from the booted BLS entry, found by matching
+# the composefs= karg from /proc/cmdline against each entry's options line.
+# Entry file names carry a priority, not which one is booted.  The boot
+# partition is not necessarily mounted at /boot on composefs systems, so
+# look under /sysroot/boot as well.
 def read_bls_source_keys [] {
-    let entries = glob /boot/loader/entries/bootc_*.conf | sort
-    if ($entries | length) == 0 {
-        error make { msg: "No composefs BLS entries found" }
+    let booted_cfs = parse_cmdline | where { |k| $k starts-with "composefs=" } | first
+    let entries = [/boot/loader/entries /sysroot/boot/loader/entries]
+        | each { |d| glob $"($d)/bootc_*.conf" }
+        | flatten
+    let booted = $entries | where { |e|
+        open $e | lines | any { |line| ($line starts-with "options ") and ($line | str contains $booted_cfs) }
     }
-    let entry = open ($entries | last)
-    $entry | lines | where { |line| $line starts-with "x-options-source-" }
+    if ($booted | length) != 1 {
+        error make { msg: $"Expected exactly one BLS entry for ($booted_cfs), found ($booted | length)" }
+    }
+    open ($booted | first) | lines | where { |line| $line starts-with "x-options-source-" }
+}
+
+# Value of an x-options-source-* line, or "" for a tombstoned source.
+def source_key_value [line: string] {
+    $line | str replace --regex '^x-options-source-\S+\s*' '' | str trim
 }
 
 # Save the current system kargs for later comparison
@@ -197,6 +215,65 @@ def fourth_boot [] {
     }
     print "ok: all phases completed, system kargs preserved"
 
+    # -- Upgrade interaction --
+    # Switch to a derived image. The new entry must carry both the tuned
+    # kargs (copied from the booted options line) and the
+    # x-options-source-tuned key (copied from the booted entry's extension
+    # keys); without the latter, tuned's kargs could never be removed again.
+    bootc image copy-to-storage
+
+    let td = mktemp -d
+    $"FROM localhost/bootc
+RUN echo source-test-marker > /usr/share/source-test-marker.txt
+" | save $"($td)/Dockerfile"
+    podman build -t localhost/bootc-source-test $"($td)"
+
+    bootc switch --transport containers-storage localhost/bootc-source-test
+    let st = bootc status --json | from json
+    assert ($st.status.staged != null) "switch should stage a deployment"
+    print "ok: switch staged on top of source-tracked kargs"
+
+    tmt-reboot
+}
+
+def fifth_boot [] {
+    # Booted into the derived image
+    let marker = open /usr/share/source-test-marker.txt | str trim
+    assert equal $marker "source-test-marker"
+
+    let cmdline = parse_cmdline
+    assert ("nohz=on" in $cmdline) "tuned nohz=on should survive the switch"
+    assert ("rcu_nocbs=2-7" in $cmdline) "tuned rcu_nocbs=2-7 should survive the switch"
+
+    let source_keys = read_bls_source_keys
+    let tuned_key = $source_keys | where { |line| $line starts-with "x-options-source-tuned" }
+    assert (($tuned_key | length) == 1) "x-options-source-tuned must be carried into the new entry"
+    let tuned_val = source_key_value ($tuned_key | first)
+    assert ($tuned_val | str contains "nohz=on") $"tuned key should still own nohz=on, got '($tuned_val)'"
+    print "ok: switch carried source kargs and their ownership key"
+
+    # Remove the source: this only works if the key survived
+    bootc loader-entries set-options-for-source --source tuned
+    let source_keys = read_bls_source_keys
+    let tuned_key = $source_keys | where { |line| $line starts-with "x-options-source-tuned" }
+    assert (($tuned_key | length) == 1) "x-options-source-tuned should remain as a tombstone"
+    assert ((source_key_value ($tuned_key | first)) == "") "x-options-source-tuned should be empty after removal"
+    print "ok: source removed after switch"
+
+    tmt-reboot
+}
+
+def sixth_boot [] {
+    let cmdline = parse_cmdline
+    assert ("nohz=on" not-in $cmdline) "tuned nohz=on should be gone after removal"
+    assert ("rcu_nocbs=2-7" not-in $cmdline) "tuned rcu_nocbs=2-7 should be gone after removal"
+
+    let system_kargs = load_system_kargs
+    for karg in $system_kargs {
+        assert ($karg in $cmdline) $"system karg '($karg)' must survive all phases"
+    }
+    print "ok: source removal after switch persisted, system kargs preserved"
+
     tap ok
 }
 
@@ -206,6 +283,8 @@ def main [] {
         "1" => second_boot,
         "2" => third_boot,
         "3" => fourth_boot,
+        "4" => fifth_boot,
+        "5" => sixth_boot,
         $o => { error make { msg: $"Unexpected TMT_REBOOT_COUNT ($o)" } },
     }
 }

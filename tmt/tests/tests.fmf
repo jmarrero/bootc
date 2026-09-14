@@ -196,5 +196,5 @@ check:
 
 /test-49-composefs-loader-entries-source:
   summary: Test bootc loader-entries set-options-for-source on composefs
-  duration: 30m
+  duration: 45m
   test: nu booted/test-composefs-loader-entries-source.nu
