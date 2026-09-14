@@ -174,8 +174,9 @@ runtime.
 On composefs-backed systems there is no ostree staging: bootc writes the
 BLS entries itself, so `set-options-for-source` edits the booted entry
 in place (and the pending entries in `entries.staged/`, if an upgrade is
-staged), and `bootc upgrade` copies the extension keys of the booted
-entry into the new one along with `options`. UKI boot is not supported,
+staged), removing a source's key outright instead of tombstoning it, and
+`bootc upgrade` copies the extension keys of the booted entry into the
+new one along with `options`. UKI boot is not supported,
 since the arguments are embedded in the image.
 
 ### Interaction with `bootc upgrade` / `switch`

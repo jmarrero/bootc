@@ -252,12 +252,12 @@ def fifth_boot [] {
     assert ($tuned_val | str contains "nohz=on") $"tuned key should still own nohz=on, got '($tuned_val)'"
     print "ok: switch carried source kargs and their ownership key"
 
-    # Remove the source: this only works if the key survived
+    # Remove the source: this only works if the key survived.  Unlike the
+    # ostree backend, composefs drops the key rather than tombstoning it.
     bootc loader-entries set-options-for-source --source tuned
     let source_keys = read_bls_source_keys
     let tuned_key = $source_keys | where { |line| $line starts-with "x-options-source-tuned" }
-    assert (($tuned_key | length) == 1) "x-options-source-tuned should remain as a tombstone"
-    assert ((source_key_value ($tuned_key | first)) == "") "x-options-source-tuned should be empty after removal"
+    assert (($tuned_key | length) == 0) "x-options-source-tuned should be gone after removal"
     print "ok: source removed after switch"
 
     tmt-reboot

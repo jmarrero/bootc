@@ -104,7 +104,7 @@ fn update_bls_config(
 /// source kargs change, and writes it back atomically.
 fn update_bls_entry_in_dir(
     entries_dir: &Dir,
-    target_version: &str,
+    target_digest: &str,
     source: &SourceName,
     new_options: Option<&str>,
 ) -> Result<bool> {
@@ -120,12 +120,15 @@ fn update_bls_entry_in_dir(
         let mut bls =
             parse_bls_config(&content).with_context(|| format!("Parsing BLS entry {file_name}"))?;
 
-        if bls.version().to_string() != target_version {
+        // Skip EFI/UKI entries — can't modify their options
+        if !matches!(bls.cfg_type, BLSConfigType::NonEFI { .. }) {
             continue;
         }
 
-        // Skip EFI/UKI entries — can't modify their options
-        if !matches!(bls.cfg_type, BLSConfigType::NonEFI { .. }) {
+        // Match on the deployment's fs-verity digest (the `composefs=` karg).
+        // Several deployments of the same OS release share a `version`, so
+        // that is not enough to tell the booted entry from the rollback one.
+        if bls.get_verity()? != target_digest {
             continue;
         }
 
@@ -209,17 +212,15 @@ pub(crate) fn set_options_for_source(
         return Ok(());
     }
 
-    let booted_version = booted_bls.version().to_string();
+    let booted_digest = booted_bls.get_verity()?;
 
     // Update the booted BLS entry in loader/entries/
     let entries_dir = boot_dir
         .open_dir("loader/entries")
         .context("Opening loader/entries")?;
 
-    if !update_bls_entry_in_dir(&entries_dir, &booted_version, &source, new_options)? {
-        anyhow::bail!(
-            "Could not find BLS entry for booted deployment (version '{booted_version}')"
-        );
+    if !update_bls_entry_in_dir(&entries_dir, &booted_digest, &source, new_options)? {
+        anyhow::bail!("Could not find BLS entry for booted deployment (digest '{booted_digest}')");
     }
 
     // If staged entries exist, also update them so finalization doesn't
@@ -230,10 +231,10 @@ pub(crate) fn set_options_for_source(
             .context("Opening staged entries directory")?;
 
         for staged_bls in &staged_entries {
-            let staged_version = staged_bls.version().to_string();
-            // Update each staged entry (best effort — some may be rollback
-            // entries that share our version)
-            let _ = update_bls_entry_in_dir(&staged_dir, &staged_version, &source, new_options);
+            // Update each staged entry, including the rollback copy of the
+            // booted deployment, so the change is not undone at finalization.
+            let staged_digest = staged_bls.get_verity()?;
+            update_bls_entry_in_dir(&staged_dir, &staged_digest, &source, new_options)?;
         }
     }
 
@@ -455,6 +456,54 @@ mod tests {
             bls.extra.get("x-options-source-dracut").unwrap(),
             "rd.driver.pre=vfio-pci"
         );
+    }
+
+    #[test]
+    fn test_update_bls_entry_in_dir_selects_by_digest() -> Result<()> {
+        // Two deployments of the same OS release share a `version`; only the
+        // entry whose composefs= digest matches may be modified.
+        use cap_std_ext::cap_std::ambient_authority;
+        let td = tempfile::tempdir()?;
+        let dir = Dir::open_ambient_dir(td.path(), ambient_authority())?;
+        let old_digest = "a".repeat(128);
+        let new_digest = "b".repeat(128);
+        let entry = |digest: &str| {
+            format!(
+                "title Test\nversion 10\nlinux /vmlinuz\ninitrd /initrd\n\
+                 options root=UUID=abc rw composefs={digest} nohz=on\n\
+                 x-options-source-tuned nohz=on\n"
+            )
+        };
+        dir.atomic_write("bootc_test-10-0.conf", entry(&old_digest))?;
+        dir.atomic_write("bootc_test-10-1.conf", entry(&new_digest))?;
+
+        let source = SourceName::parse("tuned")?;
+        assert!(update_bls_entry_in_dir(&dir, &new_digest, &source, None)?);
+
+        let untouched = dir.read_to_string("bootc_test-10-0.conf")?;
+        assert!(
+            untouched.contains("nohz=on"),
+            "rollback entry must not change"
+        );
+        assert!(untouched.contains("x-options-source-tuned nohz=on"));
+
+        let updated = parse_bls_config(&dir.read_to_string("bootc_test-10-1.conf")?)?;
+        assert!(
+            !get_options_str(&updated)?.contains("nohz=on"),
+            "booted entry loses the karg"
+        );
+        assert!(
+            !updated.extra.contains_key("x-options-source-tuned"),
+            "removed source key is dropped on composefs"
+        );
+
+        assert!(!update_bls_entry_in_dir(
+            &dir,
+            &"c".repeat(128),
+            &source,
+            None
+        )?);
+        Ok(())
     }
 
     #[test]
