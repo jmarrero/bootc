@@ -97,7 +97,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::bootc_composefs::state::{get_booted_bls, write_composefs_state};
-use crate::bootc_composefs::status::ComposefsCmdline;
+use crate::bootc_composefs::status::{ComposefsCmdline, get_sorted_staged_type1_boot_entries};
 use crate::bootc_kargs::compute_new_kargs;
 use crate::composefs_consts::{TYPE1_BOOT_DIR_PREFIX, TYPE1_ENT_PATH, TYPE1_ENT_PATH_STAGED};
 use crate::parsers::bls_config::{BLSConfig, BLSConfigType, EFIKey};
@@ -714,6 +714,10 @@ pub(crate) fn setup_composefs_bls_boot(
 ) -> Result<String> {
     let id_hex = id.to_hex();
 
+    // The tree whose kargs.d the new one is diffed against; the booted root
+    // unless building on a staged deployment
+    let mut base_root: Option<Dir> = None;
+
     let (root_path, esp_device, mut cmdline_refs, bootloader) = match setup_type {
         BootSetupType::Setup((root_setup, state, postfetch)) => {
             // root_setup.kargs has [root=UUID=<UUID>, "rw"]
@@ -762,7 +766,35 @@ pub(crate) fn setup_composefs_bls_boot(
             let bootloader = host.require_composefs_booted()?.bootloader.clone();
 
             let boot_dir = storage.require_boot_dir()?;
-            let current_cfg = get_booted_bls(&boot_dir, booted_cfs)?;
+
+            // Build on the pending entry when a deployment is staged, so a
+            // change staged earlier in this boot (`bootc loader-entries
+            // set-options-for-source`, a switch) is not lost when this one
+            // replaces it, as rpm-ostree and the ostree backend do.  kargs.d
+            // is then diffed against that deployment's tree rather than the
+            // booted one.
+            let staged_cfg = match host.status.staged {
+                Some(_) => get_sorted_staged_type1_boot_entries(&boot_dir, true)?
+                    .into_iter()
+                    .next(),
+                None => None,
+            };
+            base_root = Some(
+                match staged_cfg
+                    .as_ref()
+                    .map(|cfg| cfg.get_verity())
+                    .transpose()?
+                {
+                    Some(verity) if *verity != *booted_cfs.cmdline.digest => Dir::reopen_dir(
+                        &repo.mount(&verity).context("Mounting staged deployment")?,
+                    )?,
+                    _ => Dir::open_ambient_dir("/", ambient_authority()).context("Opening root")?,
+                },
+            );
+            let current_cfg = match staged_cfg {
+                Some(cfg) => cfg,
+                None => get_booted_bls(&boot_dir, booted_cfs)?,
+            };
 
             let mut cmdline = match current_cfg.cfg_type {
                 BLSConfigType::NonEFI { options, .. } => {
@@ -799,13 +831,7 @@ pub(crate) fn setup_composefs_bls_boot(
 
     let is_upgrade = matches!(setup_type, BootSetupType::Upgrade(..));
 
-    let current_root = if is_upgrade {
-        Some(&Dir::open_ambient_dir("/", ambient_authority()).context("Opening root")? as &Dir)
-    } else {
-        None
-    };
-
-    compute_new_kargs(mounted_erofs, current_root, &mut cmdline_refs)?;
+    compute_new_kargs(mounted_erofs, base_root.as_ref(), &mut cmdline_refs)?;
 
     let (entry_paths, _tmpdir_guard) = match bootloader.kind()? {
         BootloaderKind::GRUBClassic => {
