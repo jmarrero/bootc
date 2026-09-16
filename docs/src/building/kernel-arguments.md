@@ -171,6 +171,18 @@ on the ostree side. It requires ostree 2026.1 (2026.5 for the case where
 another tool re-stages in the same boot); bootc checks the version at
 runtime.
 
+On composefs-backed systems bootc writes the BLS entries itself, and
+`set-options-for-source` keeps the same model without ostree: it stages
+the booted deployment again with a new entry carrying the merged
+`options` line, and the current entry becomes the rollback, so
+`bootc rollback` undoes the change just as it does for a new
+deployment. Finalization installs the pending entries at shutdown; there
+is no new state directory since the deployment is the same. If an upgrade
+is already staged, its pending entry is rewritten instead and the change
+rides along with it (and is dropped with it). A removed source's key is
+deleted rather than tombstoned. UKI boot is not supported, since the
+arguments are embedded in the image.
+
 ### Interaction with `bootc upgrade` / `switch`
 
 ```mermaid
@@ -190,7 +202,8 @@ Upgrading builds on the staged deployment's arguments when there is one,
 so a source change (or an `rpm-ostree kargs` change) staged earlier in
 the same boot survives the upgrade; only the `kargs.d` *diff* between the
 two images is applied on top. The upgrade path never touches source keys;
-ostree carries them forward.
+ostree carries them forward, and on composefs bootc copies the extension
+keys of the entry it builds on into the new one along with `options`.
 
 ### Interaction with `rpm-ostree` and direct edits
 

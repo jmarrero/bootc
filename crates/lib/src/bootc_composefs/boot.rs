@@ -718,7 +718,7 @@ pub(crate) fn setup_composefs_bls_boot(
     // unless building on a staged deployment
     let mut base_root: Option<Dir> = None;
 
-    let (root_path, esp_device, mut cmdline_refs, bootloader) = match setup_type {
+    let (root_path, esp_device, mut cmdline_refs, bootloader, inherited_extra) = match setup_type {
         BootSetupType::Setup((root_setup, state, postfetch)) => {
             // root_setup.kargs has [root=UUID=<UUID>, "rw"]
             let mut cmdline_options = Cmdline::new();
@@ -759,6 +759,7 @@ pub(crate) fn setup_composefs_bls_boot(
                 esp_part.path(),
                 cmdline_options,
                 postfetch.detected_bootloader.clone(),
+                std::collections::HashMap::new(),
             )
         }
 
@@ -796,6 +797,11 @@ pub(crate) fn setup_composefs_bls_boot(
                 None => get_booted_bls(&boot_dir, booted_cfs)?,
             };
 
+            // Extension keys (e.g. `x-options-source-*` written by
+            // `loader-entries set-options-for-source`) belong to the machine,
+            // not the image: carry them into the new entry like `options`.
+            let inherited_extra = current_cfg.extra.clone();
+
             let mut cmdline = match current_cfg.cfg_type {
                 BLSConfigType::NonEFI { options, .. } => {
                     let options = options
@@ -825,6 +831,7 @@ pub(crate) fn setup_composefs_bls_boot(
                 esp_dev.path(),
                 cmdline,
                 bootloader,
+                inherited_extra,
             )
         }
     };
@@ -911,6 +918,7 @@ pub(crate) fn setup_composefs_bls_boot(
                 .with_title(title)
                 .with_version(version)
                 .with_sort_key(sort_key)
+                .with_extra(inherited_extra)
                 .with_cfg(BLSConfigType::NonEFI {
                     linux: entry_paths
                         .abs_entries_path

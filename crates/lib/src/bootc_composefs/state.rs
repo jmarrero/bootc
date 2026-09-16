@@ -265,6 +265,25 @@ pub(crate) fn update_boot_digest_in_origin(
     )
 }
 
+/// Record `staged` as the deployment to finalize at shutdown
+#[context("Recording staged deployment")]
+pub(crate) fn write_staged_deployment(staged: &StagedDeployment) -> Result<()> {
+    std::fs::create_dir_all(COMPOSEFS_TRANSIENT_STATE_DIR)
+        .with_context(|| format!("Creating {COMPOSEFS_TRANSIENT_STATE_DIR}"))?;
+
+    let staged_depl_dir = Dir::open_ambient_dir(COMPOSEFS_TRANSIENT_STATE_DIR, ambient_authority())
+        .with_context(|| format!("Opening {COMPOSEFS_TRANSIENT_STATE_DIR}"))?;
+
+    staged_depl_dir
+        .atomic_write(
+            COMPOSEFS_STAGED_DEPLOYMENT_FNAME,
+            staged
+                .to_canon_json_vec()
+                .context("Failed to serialize staged deployment JSON")?,
+        )
+        .with_context(|| format!("Writing to {COMPOSEFS_STAGED_DEPLOYMENT_FNAME}"))
+}
+
 /// Creates and populates the composefs state directory for a deployment.
 ///
 /// This function sets up the state directory structure and configuration files
@@ -359,21 +378,7 @@ pub(crate) async fn write_composefs_state(
         .context("Failed to write to .origin file")?;
 
     if let Some(staged) = staged {
-        std::fs::create_dir_all(COMPOSEFS_TRANSIENT_STATE_DIR)
-            .with_context(|| format!("Creating {COMPOSEFS_TRANSIENT_STATE_DIR}"))?;
-
-        let staged_depl_dir =
-            Dir::open_ambient_dir(COMPOSEFS_TRANSIENT_STATE_DIR, ambient_authority())
-                .with_context(|| format!("Opening {COMPOSEFS_TRANSIENT_STATE_DIR}"))?;
-
-        staged_depl_dir
-            .atomic_write(
-                COMPOSEFS_STAGED_DEPLOYMENT_FNAME,
-                staged
-                    .to_canon_json_vec()
-                    .context("Failed to serialize staged deployment JSON")?,
-            )
-            .with_context(|| format!("Writing to {COMPOSEFS_STAGED_DEPLOYMENT_FNAME}"))?;
+        write_staged_deployment(&staged)?;
     }
 
     Ok(())
