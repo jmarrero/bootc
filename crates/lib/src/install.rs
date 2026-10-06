@@ -146,6 +146,7 @@ pub(crate) mod completion;
 pub(crate) mod config;
 mod osbuild;
 pub(crate) mod osconfig;
+mod var_mounts;
 
 use std::collections::HashMap;
 use std::io::Write;
@@ -218,6 +219,8 @@ const ALONGSIDE_ROOT_MOUNT: &str = "/target";
 pub(crate) const DESTRUCTIVE_CLEANUP: &str = "etc/bootc-destructive-cleanup";
 /// This is an ext4 special directory we need to ignore.
 const LOST_AND_FOUND: &str = "lost+found";
+/// Optional features of this binary, listed by `bootc --version`.
+pub(crate) const FEATURES: &[&str] = &[var_mounts::FEATURE];
 /// The filename of the composefs EROFS superblock; TODO move this into ostree
 const OSTREE_COMPOSEFS_SUPER: &str = ".ostree.cfs";
 /// The mount path for selinux
@@ -482,6 +485,14 @@ pub(crate) struct InstallTargetFilesystemOpts {
     /// its UUID will be used.
     #[clap(long)]
     pub(crate) boot_mount_spec: Option<String>,
+
+    /// Initialize empty filesystems mounted at or below /var in the target
+    /// from the image's /var, including nested mounts.
+    ///
+    /// Without this, filesystems that the caller mounted there are left alone,
+    /// and hide the image's /var content at boot.
+    #[clap(long)]
+    pub(crate) initialize_var_mounts: bool,
 
     /// Initialize the system in-place; at the moment, only one mode for this is implemented.
     /// In the future, it may also be supported to set up an explicit "dual boot" system.
@@ -1995,6 +2006,7 @@ async fn install_to_filesystem_impl(
     state: &State,
     rootfs: &mut RootSetup,
     cleanup: Cleanup,
+    var_mounts: &[Utf8PathBuf],
 ) -> Result<()> {
     if matches!(state.selinux_state, SELinuxFinalState::ForceTargetDisabled) {
         rootfs.kargs.extend(&Cmdline::from("selinux=0"));
@@ -2092,6 +2104,20 @@ async fn install_to_filesystem_impl(
         }
     }
 
+    // The deployment backend seeds its own state directory, not the caller's
+    // mounted /var tree. Populate fresh external filesystems while all nested
+    // mounts are still visible, before labeling and finalizing the installation.
+    let prepared_var_mounts = if !var_mounts.is_empty() {
+        let source = if state.composefs_options.composefs_backend {
+            Utf8PathBuf::from(crate::composefs_consts::SHARED_VAR_PATH)
+        } else {
+            Utf8PathBuf::from(format!("ostree/deploy/{}/var", state.stateroot()))
+        };
+        var_mounts::populate(&rootfs.physical_root, &source, var_mounts)?
+    } else {
+        Vec::new()
+    };
+
     // As the very last step before filesystem finalization, do a full SELinux
     // relabel of the physical root filesystem.  Any files that are already
     // labeled (e.g. ostree deployment contents, composefs objects) are skipped.
@@ -2100,9 +2126,31 @@ async fn install_to_filesystem_impl(
         let mut path = Utf8PathBuf::from("");
         crate::lsm::ensure_dir_labeled_recurse(&rootfs.physical_root, &mut path, &policy, None)
             .context("Final SELinux relabeling of physical root")?;
+        // The physical-root walk skips mountpoints. Label each newly
+        // prepared filesystem separately, using its deployed /var path.
+        for mount in &prepared_var_mounts {
+            let mut path = var_mounts::target_path(mount);
+            // These are fresh filesystems; label their roots unconditionally.
+            // Without selinuxfs (e.g. in an osbuild buildroot), an inode without
+            // a label still reports the kernel's unlabeled context, which the
+            // walk below would take as labeled.
+            for p in [path.clone(), path.join(LOST_AND_FOUND)] {
+                if let Some(meta) = rootfs.physical_root.symlink_metadata_optional(&p)? {
+                    crate::lsm::relabel(&rootfs.physical_root, &meta, &p, None, &policy)
+                        .with_context(|| format!("SELinux labeling of /{p}"))?;
+                }
+            }
+            crate::lsm::ensure_dir_labeled_recurse(&rootfs.physical_root, &mut path, &policy, None)
+                .with_context(|| format!("SELinux labeling of /{path}"))?;
+        }
     } else {
         tracing::debug!("Skipping final SELinux relabel (SELinux is disabled)");
     }
+
+    // Flush the /var filesystems we wrote, surfacing any writeback errors.
+    // Unlike root and boot they are not remounted read-only or frozen: they
+    // may be bind mounts or lack freeze support, and callers may add content.
+    var_mounts::sync(&rootfs.physical_root, &prepared_var_mounts)?;
 
     // Finalize mounted filesystems
     if !rootfs.skip_finalize {
@@ -2193,7 +2241,7 @@ pub(crate) async fn install_to_disk(mut opts: InstallToDiskOpts) -> Result<()> {
         (rootfs, loopback_dev)
     };
 
-    install_to_filesystem_impl(&state, &mut rootfs, Cleanup::Skip).await?;
+    install_to_filesystem_impl(&state, &mut rootfs, Cleanup::Skip, &[]).await?;
 
     // Drop all data about the root except the bits we need to ensure any file descriptors etc. are closed.
     let (root_path, luksdev) = rootfs.into_storage();
@@ -2721,7 +2769,23 @@ pub(crate) async fn install_to_filesystem(
         skip_finalize,
     };
 
-    install_to_filesystem_impl(&state, &mut rootfs, cleanup).await?;
+    // Reinstalling alongside an existing OS must not initialize its live state.
+    let var_mounts = if targeting_host_root
+        || is_already_ostree
+        || matches!(fsopts.replace, Some(ReplaceMode::Alongside))
+    {
+        anyhow::ensure!(
+            !fsopts.initialize_var_mounts,
+            "--initialize-var-mounts is not supported when installing to the host root, \
+             over an existing ostree system or with --replace=alongside"
+        );
+        Vec::new()
+    } else if fsopts.initialize_var_mounts {
+        var_mounts::discover(&rootfs.physical_root_path)?
+    } else {
+        Vec::new()
+    };
+    install_to_filesystem_impl(&state, &mut rootfs, cleanup, &var_mounts).await?;
 
     // Drop all data about the root except the path to ensure any file descriptors etc. are closed.
     drop(rootfs);
@@ -2766,6 +2830,7 @@ pub(crate) async fn install_to_existing_root(opts: InstallToExistingRootOpts) ->
             root_path: opts.root_path,
             root_mount_spec: None,
             boot_mount_spec: None,
+            initialize_var_mounts: false,
             replace: opts.replace,
             skip_finalize: true,
             acknowledge_destructive: opts.acknowledge_destructive,

@@ -865,6 +865,22 @@ impl InternalsOpts {
 
 /// Deploy and transactionally in-place with bootable container images.
 ///
+/// The text of `bootc --version`: the version, then the optional features of
+/// this binary that tools driving bootc can rely on being present.
+fn long_version() -> &'static str {
+    static LONG_VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    LONG_VERSION
+        .get_or_init(|| format_long_version(clap::crate_version!(), crate::install::FEATURES))
+}
+
+fn format_long_version(version: &str, features: &[&str]) -> String {
+    let features = features
+        .iter()
+        .map(|f| format!("\n - {f}"))
+        .collect::<String>();
+    format!("{version}\nFeatures:{features}")
+}
+
 /// The `bootc` project currently uses ostree-containers as a backend
 /// to support a model of bootable container images.  Once installed,
 /// whether directly via `bootc install` (executed as part of a container)
@@ -873,7 +889,7 @@ impl InternalsOpts {
 #[derive(Debug, Parser, PartialEq, Eq)]
 #[clap(name = "bootc")]
 #[clap(rename_all = "kebab-case")]
-#[clap(version,long_version=clap::crate_version!())]
+#[clap(version, long_version = long_version())]
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum Opt {
     /// Download and queue an updated container image to apply.
@@ -2864,6 +2880,19 @@ mod tests {
                 .unwrap();
                 assert!(matches!(opt, Opt::LoaderEntries(_)));
             }
+        }
+    }
+
+    #[test]
+    fn test_long_version() {
+        assert_eq!(
+            format_long_version("1.2.3", &["a", "b"]),
+            "1.2.3\nFeatures:\n - a\n - b"
+        );
+        // Every feature we have shows up in `bootc --version`
+        let long = Opt::command().render_long_version();
+        for f in crate::install::FEATURES {
+            assert!(long.contains(&format!("\n - {f}")), "{long}");
         }
     }
 }
